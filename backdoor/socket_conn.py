@@ -1,7 +1,7 @@
 import socket
 
 conn = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-conn.connect(('192.168.64.2', 8080))
+conn.connect(('192.168.56.1', 8080))
 
 str_data = "\n[+] Connection established.\n"
 
